@@ -1,0 +1,14 @@
+langchain-community
+langchain-text-splitters
+langchain-ollama
+pypdf
+requests
+chromadb
+python-dotenv
+sentence-transformers
+faiss-cpu
+fastapi 
+uvicorn 
+pydantic
+streamlit 
+
