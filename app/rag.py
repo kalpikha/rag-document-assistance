@@ -1,5 +1,6 @@
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_core.prompts import ChatPromptTemplate
 
 # Embeddings
 embeddings = OllamaEmbeddings(
@@ -23,38 +24,50 @@ retriever = vectorstore.as_retriever(
 llm = OllamaLLM(model="llama3.2:1b")
 
 
-def build_prompt(context, question):
-    return f"""
-You are a factual document assistant.
 
-Use ONLY the provided context to answer.
+prompt_template = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+You are a factual AI assistant.
 
-If the answer is not present in the context,
-reply with: "I don't know based on the provided document."
+Answer ONLY from the provided context.
 
+Rules:
+- Do not hallucinate.
+- If answer is missing, say:
+  "I don't know based on the provided document."
+"""
+        ),
+
+        (
+            "human",
+            """
 Context:
 {context}
 
 Question:
 {question}
-
-Answer:
 """
+        )
+    ]
+)
 
 
 def ask_question(query):
-    # Retrieve documents
+
     docs = retriever.invoke(query)
 
-    # Combine retrieved chunks
     context = "\n\n".join(
         [doc.page_content for doc in docs]
     )
 
-    # Prompt
-    prompt = build_prompt(context, query)
+    prompt = prompt_template.format_messages(
+        context=context,
+        question=query
+    )
 
-    # LLM response
     response = llm.invoke(prompt)
 
     return {
@@ -63,7 +76,7 @@ def ask_question(query):
         "sources": [
             {
                 "page": doc.metadata.get("page"),
-                "content": doc.page_content[:20]
+                "content": doc.page_content[:200]
             }
             for doc in docs
         ]
