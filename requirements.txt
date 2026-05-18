@@ -11,4 +11,4 @@ fastapi
 uvicorn 
 pydantic
 streamlit 
-
+langchain-memory 

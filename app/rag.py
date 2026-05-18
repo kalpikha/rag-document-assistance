@@ -1,6 +1,7 @@
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.chat_history import InMemoryChatMessageHistory
 
 # Embeddings
 embeddings = OllamaEmbeddings(
@@ -22,8 +23,6 @@ retriever = vectorstore.as_retriever(
 
 # LLM
 llm = OllamaLLM(model="llama3.2:1b")
-
-
 
 prompt_template = ChatPromptTemplate.from_messages(
     [
@@ -54,6 +53,18 @@ Question:
     ]
 )
 
+store = {}
+
+
+def get_session_history(session_id: str):
+
+    if session_id not in store:
+        store[session_id] = InMemoryChatMessageHistory()
+
+    return store[session_id]
+
+MAX_CONTEXT_CHARS = 2000
+
 
 def ask_question(query):
 
@@ -62,6 +73,8 @@ def ask_question(query):
     context = "\n\n".join(
         [doc.page_content for doc in docs]
     )
+
+    context = context[:MAX_CONTEXT_CHARS]
 
     prompt = prompt_template.format_messages(
         context=context,
