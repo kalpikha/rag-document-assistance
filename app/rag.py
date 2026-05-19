@@ -5,6 +5,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.runnables import RunnableLambda
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_classic.chains import create_history_aware_retriever
+from langchain_core.prompts import MessagesPlaceholder
 
 # Embeddings
 embeddings = OllamaEmbeddings(
@@ -21,11 +24,31 @@ vectorstore = FAISS.load_local(
 
 # Retriever
 retriever = vectorstore.as_retriever(
-    search_kwargs={"k": 4}
+    search_kwargs={"k": 5}
 )
 
 # LLM
 llm = OllamaLLM(model="llama3.2:1b")
+
+contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+Given the chat history and latest user question,
+rewrite the question so it can be understood
+without chat history.
+
+Do NOT answer the question.
+Only rewrite it if needed.
+"""
+        ),
+
+        MessagesPlaceholder("chat_history"),
+
+        ("human", "{input}")
+    ]
+)
 
 prompt_template = ChatPromptTemplate.from_messages(
     [
@@ -46,6 +69,9 @@ Rules:
         (
             "human",
             """
+Chat History:
+{chat_history}
+
 Context:
 {context}
 
@@ -67,6 +93,12 @@ def get_session_history(session_id: str):
     return store[session_id]
 
 
+history_aware_retriever = create_history_aware_retriever(
+    llm=llm,
+    retriever=retriever,
+    prompt=contextualize_q_prompt
+)
+
 
 MAX_CONTEXT_CHARS = 2000
 ACKNOWLEDGEMENT_INPUTS = {
@@ -86,6 +118,7 @@ ACKNOWLEDGEMENT_INPUTS = {
     "thank you",
     "thank you!"
 }
+
 
 
 def _coerce_question_text(value):
@@ -133,6 +166,7 @@ def _is_acknowledgement(query):
 def rag_pipeline(inputs):
 
     query = _extract_latest_query(inputs["question"])
+    session_id = inputs.get("session_id", "default_user")
 
     if _is_acknowledgement(query):
         return {
@@ -140,7 +174,21 @@ def rag_pipeline(inputs):
             "sources": []
         }
 
-    docs = retriever.invoke(query)
+    history = get_session_history(session_id)
+
+    chat_history = "\n".join(
+        [
+            f"{msg.type}: {msg.content}"
+            for msg in history.messages[-4:]
+        ]
+    )
+
+    docs = history_aware_retriever.invoke(
+        {
+            "input": query,
+            "chat_history": history.messages
+        }
+    )
 
     context = "\n\n".join(
         [doc.page_content for doc in docs]
@@ -149,6 +197,7 @@ def rag_pipeline(inputs):
     context = context[:MAX_CONTEXT_CHARS]
 
     prompt = prompt_template.format_messages(
+        chat_history=chat_history,
         context=context,
         question=query
     )
@@ -159,6 +208,7 @@ def rag_pipeline(inputs):
         "answer": response,
         "sources": [
             {
+                "document": doc.metadata.get("source"),
                 "page": doc.metadata.get("page"),
                 "preview": doc.page_content[:300]
             }
@@ -181,7 +231,10 @@ def ask_question(query, session_id="default_user"):
 
     response = chain.invoke(
 
-        {"question": query},
+        {
+            "question": query,
+            "session_id": session_id
+        },
 
         config={
             "configurable": {
