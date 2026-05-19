@@ -1,7 +1,10 @@
 from langchain_community.vectorstores import FAISS
 from langchain_ollama import OllamaEmbeddings, OllamaLLM
+from langchain_core.messages import BaseMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.chat_history import InMemoryChatMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.runnables import RunnableLambda
 
 # Embeddings
 embeddings = OllamaEmbeddings(
@@ -55,7 +58,7 @@ Question:
 
 store = {}
 
-
+#session-aware memory
 def get_session_history(session_id: str):
 
     if session_id not in store:
@@ -63,10 +66,79 @@ def get_session_history(session_id: str):
 
     return store[session_id]
 
+
+
 MAX_CONTEXT_CHARS = 2000
+ACKNOWLEDGEMENT_INPUTS = {
+    "cool",
+    "good",
+    "good job",
+    "great",
+    "great!",
+    "nice",
+    "ok",
+    "okay",
+    "perfect",
+    "sounds good",
+    "super",
+    "thanks",
+    "thanks!",
+    "thank you",
+    "thank you!"
+}
 
 
-def ask_question(query):
+def _coerce_question_text(value):
+
+    if isinstance(value, str):
+        return value
+
+    if isinstance(value, BaseMessage):
+        return value.content if isinstance(value.content, str) else str(value.content)
+
+    if isinstance(value, (list, tuple)):
+        parts = [
+            _coerce_question_text(item)
+            for item in value
+        ]
+
+        return "\n".join(
+            part for part in parts
+            if part
+        )
+
+    return str(value)
+
+
+def _extract_latest_query(value):
+
+    if isinstance(value, (list, tuple)):
+        for item in reversed(value):
+            if isinstance(item, BaseMessage):
+                return _coerce_question_text(item)
+
+        if value:
+            return _coerce_question_text(value[-1])
+
+    return _coerce_question_text(value)
+
+
+def _is_acknowledgement(query):
+
+    normalized_query = " ".join(query.lower().strip().split())
+
+    return normalized_query in ACKNOWLEDGEMENT_INPUTS
+
+
+def rag_pipeline(inputs):
+
+    query = _extract_latest_query(inputs["question"])
+
+    if _is_acknowledgement(query):
+        return {
+            "answer": "Glad that helped.",
+            "sources": []
+        }
 
     docs = retriever.invoke(query)
 
@@ -84,13 +156,38 @@ def ask_question(query):
     response = llm.invoke(prompt)
 
     return {
-        "question": query,
         "answer": response,
         "sources": [
             {
                 "page": doc.metadata.get("page"),
-                "content": doc.page_content[:200]
+                "preview": doc.page_content[:300]
             }
             for doc in docs
         ]
     }
+
+
+chain = RunnableWithMessageHistory(
+    
+    RunnableLambda(rag_pipeline),
+
+    get_session_history,
+
+    input_messages_key="question",
+    output_messages_key="answer"
+)
+
+def ask_question(query, session_id="default_user"):
+
+    response = chain.invoke(
+
+        {"question": query},
+
+        config={
+            "configurable": {
+                "session_id": session_id
+            }
+        }
+    )
+
+    return response

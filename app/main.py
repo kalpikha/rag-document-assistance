@@ -4,33 +4,60 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
 from fastapi import FastAPI
 from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.rag import ask_question
 
 app = FastAPI(
-    title="RAG API",
-    description="AI Document Assistant using Ollama + FAISS",
-    version="1.0"
+    title="AI Document Assistant",
+    description="Conversational RAG API using Ollama + FAISS",
+    version="2.0"
 )
 
+# -----------------------------------
+# CORS CONFIG
+# -----------------------------------
 
-# Request schema --> Pydantic for schema validation
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# -----------------------------------
+# REQUEST MODEL
+# -----------------------------------
+
 class QueryRequest(BaseModel):
     question: str
+    session_id: str
 
 
-# Health check endpoint
+# -----------------------------------
+# HEALTH CHECK
+# -----------------------------------
+
 @app.get("/")
-def home():
+def health_check():
+
     return {
-        "message": "RAG API is running"
+        "status": "running",
+        "message": "AI Document Assistant API is active"
     }
 
 
-# Ask endpoint
+# -----------------------------------
+# ASK ENDPOINT
+# -----------------------------------
+
 @app.post("/ask")
 def ask(request: QueryRequest):
 
-    response = ask_question(request.question)
+    response = ask_question(
+        query=request.question,
+        session_id=request.session_id
+    )
 
     return response
