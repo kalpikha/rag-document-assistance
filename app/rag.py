@@ -5,9 +5,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_core.runnables import RunnableLambda
-from langchain_core.messages import HumanMessage, AIMessage
 from langchain_classic.chains import create_history_aware_retriever
 from langchain_core.prompts import MessagesPlaceholder
+from pathlib import Path
 
 # Embeddings
 embeddings = OllamaEmbeddings(
@@ -16,16 +16,30 @@ embeddings = OllamaEmbeddings(
 )
 
 # Load vector DB
-vectorstore = FAISS.load_local(
-    "vectorstore/",
-    embeddings,
-    allow_dangerous_deserialization=True
-)
 
-# Retriever
-retriever = vectorstore.as_retriever(
-    search_kwargs={"k": 5}
-)
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+VECTORSTORE_BASE = BASE_DIR / "vectorstore" / "sessions"
+
+
+def get_retriever(session_id):
+
+    vs_path = VECTORSTORE_BASE / session_id
+
+    if not vs_path.exists():
+        return None
+
+    vectorstore = FAISS.load_local(
+        str(vs_path),
+        embeddings,
+        allow_dangerous_deserialization=True
+    )
+
+    retriever = vectorstore.as_retriever(
+        search_kwargs={"k": 4}
+    )
+
+    return retriever
 
 # LLM
 llm = OllamaLLM(model="llama3.2:1b")
@@ -57,27 +71,26 @@ prompt_template = ChatPromptTemplate.from_messages(
             """
 You are a factual AI assistant.
 
-Answer ONLY from the provided context.
+Answer ONLY from the provided context below.
+Use the chat history to understand follow-up questions.
 
 Rules:
-- Do not hallucinate.
-- If answer is missing, say:
+- Base your answer strictly on the context.
+- If the context does not contain the answer, say:
   "I don't know based on the provided document."
+- Be concise but complete.
+
+Chat History:
+{chat_history}
+
+Context from documents:
+{context}
 """
         ),
 
         (
             "human",
-            """
-Chat History:
-{chat_history}
-
-Context:
-{context}
-
-Question:
-{question}
-"""
+            "{question}"
         )
     ]
 )
@@ -93,14 +106,8 @@ def get_session_history(session_id: str):
     return store[session_id]
 
 
-history_aware_retriever = create_history_aware_retriever(
-    llm=llm,
-    retriever=retriever,
-    prompt=contextualize_q_prompt
-)
 
-
-MAX_CONTEXT_CHARS = 2000
+MAX_CONTEXT_CHARS = 6000
 ACKNOWLEDGEMENT_INPUTS = {
     "cool",
     "good",
@@ -183,6 +190,20 @@ def rag_pipeline(inputs):
         ]
     )
 
+    retriever = get_retriever(session_id)
+
+    if retriever is None:
+        return {
+            "answer": "No documents uploaded yet. Please upload a PDF first.",
+            "sources": []
+        }
+
+    history_aware_retriever = create_history_aware_retriever(
+        llm,
+        retriever,
+        contextualize_q_prompt
+    )
+
     docs = history_aware_retriever.invoke(
         {
             "input": query,
@@ -190,11 +211,23 @@ def rag_pipeline(inputs):
         }
     )
 
-    context = "\n\n".join(
-        [doc.page_content for doc in docs]
-    )
+    # Build context from retrieved docs, keeping whole chunks
+    context_parts = []
+    total_len = 0
+    for doc in docs:
+        if total_len + len(doc.page_content) > MAX_CONTEXT_CHARS:
+            break
+        context_parts.append(doc.page_content)
+        total_len += len(doc.page_content)
 
-    context = context[:MAX_CONTEXT_CHARS]
+    context = "\n\n".join(context_parts)
+
+    print(f"\n🔍 Query: {query}")
+    print(f"📄 Retrieved {len(docs)} docs, using {len(context_parts)} in context ({len(context)} chars)")
+    for i, doc in enumerate(docs):
+        src = doc.metadata.get('source', '?')
+        pg = doc.metadata.get('page', '?')
+        print(f"   Doc {i+1}: {src} p.{pg} — {doc.page_content[:80]}...")
 
     prompt = prompt_template.format_messages(
         chat_history=chat_history,

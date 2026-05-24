@@ -32,9 +32,83 @@ with st.sidebar:
     st.write("Current Session ID:")
     st.code(st.session_state.session_id)
 
-    if st.button("🔄 New Chat"):
+    # -----------------------------------
+    # PDF Upload
+    # -----------------------------------
+
+    st.subheader("📄 Upload PDF")
+
+    if "uploaded_files" not in st.session_state:
+        st.session_state.uploaded_files = set()
+
+    uploaded_file = st.file_uploader(
+        "Choose a PDF file",
+        type=["pdf"]
+    )
+
+    if uploaded_file and uploaded_file.name not in st.session_state.uploaded_files:
+
+        with st.spinner(
+            "Uploading and indexing document..."
+        ):
+
+            try:
+
+                files = {
+                    "file": (
+                        uploaded_file.name,
+                        uploaded_file,
+                        "application/pdf"
+                    )
+                }
+
+                response = requests.post(
+                    "http://127.0.0.1:8000/upload",
+                    files=files,
+                    params={
+                        "session_id": st.session_state.session_id
+                    }
+                )
+
+                result = response.json()
+
+                if response.status_code == 200:
+
+                    st.session_state.uploaded_files.add(
+                        uploaded_file.name
+                    )
+
+                    st.success(
+                        result["message"]
+                    )
+
+                else:
+
+                    st.error(
+                        result.get(
+                            "error",
+                            "Upload failed"
+                        )
+                    )
+
+            except Exception as e:
+
+                st.error(
+                    f"Upload error: {str(e)}"
+                )
+
+    if st.button("🔄 New Chat", key="sidebar_new_chat"):
+
+        # Delete old session vectorstore
+        try:
+            requests.delete(
+                f"http://127.0.0.1:8000/session/{st.session_state.session_id}"
+            )
+        except Exception:
+            pass
 
         st.session_state.messages = []
+        st.session_state.uploaded_files = set()
 
         st.session_state.session_id = str(uuid.uuid4())
 
