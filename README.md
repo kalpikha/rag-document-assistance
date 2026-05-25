@@ -1,4 +1,4 @@
-# rag-document-assistance
+# Docu Assist
 
 Conversational RAG app for PDF document Q&A using local AI (Ollama).
 
